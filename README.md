@@ -1,6 +1,6 @@
 # Mecânicas de Jogos em C# (Avançado)
 
-Este repositório apresenta uma coleção de scripts C# para mecânicas de jogos, desenvolvidos com foco em padrões de projeto e boas práticas de programação. É ideal para desenvolvedores que buscam aprimorar seu portfólio com exemplos de código mais robustos e escaláveis, utilizando conceitos como **State Machines** e **Interfaces**.
+Este repositório apresenta uma coleção de scripts C# para mecânicas de jogos, desenvolvidos com foco em padrões de projeto e boas práticas de programação. É ideal para desenvolvedores que buscam aprimorar seu portfólio com exemplos de código mais robustos e escaláveis, utilizando conceitos como **State Machines**, **Interfaces** e **Object Pooling**.
 
 ## Mecânicas Incluídas:
 
@@ -140,7 +140,7 @@ public class CameraFollow : MonoBehaviour
     }
 
     /// <summary>
-    /// Adjusts the camera's offset from the target.
+    /// Adjusts the camera\'s offset from the target.
     /// </summary>
     /// <param name="newOffset">The new offset vector.</param>
     public void SetOffset(Vector3 newOffset)
@@ -273,6 +273,136 @@ public class Projectile : MonoBehaviour
         }
 
         Destroy(gameObject);
+    }
+}
+```
+
+### 5. ObjectPooler.cs (Gerenciamento de Performance)
+
+Este é um **Object Pooler Genérico** implementado como um **Singleton**, uma técnica crucial para otimização de performance em jogos. Em vez de instanciar e destruir objetos constantemente (o que gera lixo na memória e causa picos de desempenho), o Object Pooler reutiliza objetos pré-criados. Isso é ideal para projéteis, efeitos de partículas, inimigos e outros elementos que aparecem e desaparecem frequentemente.
+
+**Características:**
+*   **Singleton:** Acesso fácil e global ao pooler de qualquer lugar do código.
+*   **Genérico:** Pode gerenciar pools de diferentes tipos de `GameObject`s.
+*   **Reutilização de Objetos:** Reduz a alocação de memória e o impacto do *Garbage Collector*.
+*   **Interface `IPoolable`:** Permite que objetos no pool recebam notificações (`OnSpawnFromPool`, `OnReturnToPool`) quando são ativados ou desativados, para redefinir estados ou componentes.
+
+**Como usar:**
+1.  Crie um `GameObject` vazio na sua cena e anexe o script `ObjectPooler` a ele.
+2.  No Inspector do `ObjectPooler`, configure os `Pools`:
+    *   `Tag`: Um identificador único para o tipo de objeto (ex: "Bullet", "Explosion").
+    *   `Prefab`: O `GameObject` que você deseja agrupar (ex: o prefab do seu projétil).
+    *   `Size`: A quantidade inicial de objetos que serão criados no pool.
+3.  Para objetos que serão agrupados (como seu `Projectile.cs`), faça com que eles implementem a interface `IPoolable` e adicione a lógica de inicialização/reset nos métodos `OnSpawnFromPool()` e `OnReturnToPool()`.
+4.  Para obter um objeto do pool:
+    ```csharp
+    GameObject bullet = ObjectPooler.Instance.SpawnFromPool("Bullet", transform.position, transform.rotation);
+    ```
+5.  Para retornar um objeto ao pool (geralmente quando ele não é mais necessário):
+    ```csharp
+    ObjectPooler.Instance.ReturnToPool("Bullet", bullet);
+    // Ou, se o objeto se autodestrói, ele pode chamar ReturnToPool em vez de Destroy(gameObject);
+    ```
+
+```csharp
+using System.Collections.Generic;
+using UnityEngine;
+
+/// <summary>
+/// A generic object pooler that reuses game objects to improve performance.
+/// Implemented as a Singleton for easy access.
+/// </summary>
+public class ObjectPooler : MonoBehaviour
+{
+    public static ObjectPooler Instance { get; private set; }
+
+    [System.Serializable]
+    public class Pool
+    {
+        public string tag;
+        public GameObject prefab;
+        public int size;
+    }
+
+    public List<Pool> pools;
+    private Dictionary<string, Queue<GameObject>> _poolDictionary;
+
+    void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        Instance = this;
+        DontDestroyOnLoad(gameObject);
+
+        _poolDictionary = new Dictionary<string, Queue<GameObject>>();
+
+        foreach (Pool pool in pools)
+        {
+            Queue<GameObject> objectPool = new Queue<GameObject>();
+
+            for (int i = 0; i < pool.size; i++)
+            {
+                GameObject obj = Instantiate(pool.prefab);
+                obj.SetActive(false);
+                objectPool.Enqueue(obj);
+            }
+
+            _poolDictionary.Add(pool.tag, objectPool);
+        }
+    }
+
+    /// <summary>
+    /// Spawns an object from the pool.
+    /// </summary>
+    /// <param name="tag">The tag of the object to spawn.</param>
+    /// <param name="position">The position to spawn the object at.</param>
+    /// <param name="rotation">The rotation to spawn the object with.</param>
+    /// <returns>The spawned GameObject.</returns>
+    public GameObject SpawnFromPool(string tag, Vector3 position, Quaternion rotation)
+    {
+        if (!_poolDictionary.ContainsKey(tag))
+        {
+            Debug.LogWarning($"Pool with tag {tag} doesn\'t exist.");
+            return null;
+        }
+
+        GameObject objectToSpawn = _poolDictionary[tag].Dequeue();
+
+        objectToSpawn.SetActive(true);
+        objectToSpawn.transform.position = position;
+        objectToSpawn.transform.rotation = rotation;
+
+        IPoolable poolableObject = objectToSpawn.GetComponent<IPoolable>();
+        poolableObject?.OnSpawnFromPool();
+
+        _poolDictionary[tag].Enqueue(objectToSpawn); // Re-add to the end of the queue
+
+        return objectToSpawn;
+    }
+
+    /// <summary>
+    /// Returns an object to the pool.
+    /// </summary>
+    /// <param name="tag">The tag of the object to return.</param>
+    /// <param name="obj">The GameObject to return.</param>
+    public void ReturnToPool(string tag, GameObject obj)
+    {
+        if (!_poolDictionary.ContainsKey(tag))
+        {
+            Debug.LogWarning($"Pool with tag {tag} doesn\'t exist.");
+            Destroy(obj);
+            return;
+        }
+
+        IPoolable poolableObject = obj.GetComponent<IPoolable>();
+        poolableObject?.OnReturnToPool();
+
+        obj.SetActive(false);
+        // The object is already in the queue from SpawnFromPool, so no need to Enqueue again here
+        // This method is more for calling OnReturnToPool and setting inactive
     }
 }
 ```
